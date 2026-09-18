@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: staff-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python web.py
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: FT_GOOGLE_SHEETS_ID
+        sync: false
+      - key: FT_GOOGLE_FORM_ID
+        sync: false
+      - key: RW_GOOGLE_SHEETS_ID
+        sync: false
+      - key: RW_GOOGLE_FORM_ID
+        sync: false
+      - key: PORT
+        value: 10000
+    autoDeploy: false
