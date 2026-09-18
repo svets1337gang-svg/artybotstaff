@@ -33,6 +33,8 @@ def get_google_service():
         # Credentials from Render Secret File path or default
         creds_path = os.getenv('GOOGLE_CREDS_PATH', 'credentials.json')
         creds = Credentials.from_service_account_file(creds_path)
+        scopes = ['https://www.googleapis.com/auth/drive']
+        creds = creds.with_scopes(scopes)
         return build('drive', 'v3', credentials=creds)
     except Exception as e:
         print(f"❌ Ошибка Google: {e}")
@@ -300,19 +302,37 @@ async def revoke_access(interaction: discord.Interaction, email: str):
 
         def remove_permission(file_id, email, file_name):
             try:
+                # Пробуем получить список разрешений
                 permissions = service.permissions().list(
                     fileId=file_id,
-                    fields="permissions(id, emailAddress, type)"
+                    fields="permissions(id, emailAddress, type, role)",
+                    supportsAllDrives=True
                 ).execute()
 
+                found = False
                 for perm in permissions.get('permissions', []):
                     if perm.get('type') == 'user' and perm.get('emailAddress', '').lower() == email:
-                        service.permissions().delete(fileId=file_id, permissionId=perm['id']).execute()
-                        return f"✅ Доступ к {file_name} удалён."
+                        try:
+                            service.permissions().delete(
+                                fileId=file_id,
+                                permissionId=perm['id'],
+                                supportsAllDrives=True
+                            ).execute()
+                            found = True
+                        except Exception as delete_error:
+                            # Если не удалось удалить через обычный API, пробуем через форму
+                            if "forms" in str(delete_error).lower() or "404" in str(delete_error):
+                                return f"⚠️ Доступ к {file_name} не может быть удалён через API (возможно, это форма с особыми правами)."
+                            raise
 
+                if found:
+                    return f"✅ Доступ к {file_name} удалён."
                 return f"⚠️ Доступ к {file_name} не найден."
             except Exception as e:
-                return f"❌ Ошибка {file_name}: {str(e)[:100]}"
+                error_msg = str(e).lower()
+                if "404" in error_msg or "not found" in error_msg:
+                    return f"⚠️ {file_name.capitalize()} не найдена или доступ уже удалён."
+                return f"❌ Ошибка {file_name}: {str(e)[:150]}"
 
         results.append(remove_permission(FT_GOOGLE_SHEETS_ID, email, "таблице"))
 
@@ -321,6 +341,8 @@ async def revoke_access(interaction: discord.Interaction, email: str):
             form_id = form_id.split("/d/")[1].split("/")[0]
         elif "/e/" in form_id:
             form_id = form_id.split("/e/")[1].split("/")[0]
+        elif "/forms/d/" in form_id:
+            form_id = form_id.split("/forms/d/")[1].split("/")[0]
 
         if form_id:
             results.append(remove_permission(form_id, email, "форме"))
@@ -817,43 +839,36 @@ async def revoke_access_rw(interaction: discord.Interaction, email: str):
 
         def remove_permission(file_id, email, file_name):
             try:
-                # Обычные разрешения
+                # Пробуем получить список разрешений
                 permissions = service.permissions().list(
                     fileId=file_id,
-                    fields="permissions(id, emailAddress, type, role, view)",
+                    fields="permissions(id, emailAddress, type, role)",
                     supportsAllDrives=True
                 ).execute()
 
-                perms_list = permissions.get('permissions', [])
-
-                # Если нужного email нет — проверяем published view
-                if not any(
-                    p.get('type') == 'user' and p.get('emailAddress', '').lower() == email
-                    for p in perms_list
-                ):
-                    try:
-                        permissions = service.permissions().list(
-                            fileId=file_id,
-                            fields="permissions(id, emailAddress, type, role, view)",
-                            includePermissionsForView="published",
-                            supportsAllDrives=True
-                        ).execute()
-                        perms_list = permissions.get('permissions', [])
-                    except Exception as e:
-                        print(f"⚠️ published view недоступен: {e}")
-
-                # Удаляем
-                for perm in perms_list:
+                found = False
+                for perm in permissions.get('permissions', []):
                     if perm.get('type') == 'user' and perm.get('emailAddress', '').lower() == email:
-                        service.permissions().delete(
-                            fileId=file_id,
-                            permissionId=perm['id'],
-                            supportsAllDrives=True
-                        ).execute()
-                        return f"✅ Доступ к {file_name} удалён."
+                        try:
+                            service.permissions().delete(
+                                fileId=file_id,
+                                permissionId=perm['id'],
+                                supportsAllDrives=True
+                            ).execute()
+                            found = True
+                        except Exception as delete_error:
+                            # Если не удалось удалить через обычный API, пробуем через форму
+                            if "forms" in str(delete_error).lower() or "404" in str(delete_error):
+                                return f"⚠️ Доступ к {file_name} не может быть удалён через API (возможно, это форма с особыми правами)."
+                            raise
 
-                return f"⚠️ Доступ к {file_name} не найден (проверьте, что email совпадает)."
+                if found:
+                    return f"✅ Доступ к {file_name} удалён."
+                return f"⚠️ Доступ к {file_name} не найден."
             except Exception as e:
+                error_msg = str(e).lower()
+                if "404" in error_msg or "not found" in error_msg:
+                    return f"⚠️ {file_name.capitalize()} не найдена или доступ уже удалён."
                 return f"❌ Ошибка {file_name}: {str(e)[:150]}"
 
         # Таблица
@@ -861,6 +876,13 @@ async def revoke_access_rw(interaction: discord.Interaction, email: str):
 
         # Форма
         form_id = RW_GOOGLE_FORM_ID.strip()
+        if "/d/" in form_id:
+            form_id = form_id.split("/d/")[1].split("/")[0]
+        elif "/e/" in form_id:
+            form_id = form_id.split("/e/")[1].split("/")[0]
+        elif "/forms/d/" in form_id:
+            form_id = form_id.split("/forms/d/")[1].split("/")[0]
+
         if form_id:
             results.append(remove_permission(form_id, email, "форме"))
         else:
@@ -1315,9 +1337,16 @@ async def on_ready():
     print(f'✅ Merged Staff Bot {bot.user} запущен!')
     print(f'✅ FT таблица: {FT_SHEET_NAME}')
     print(f'✅ RW таблица: {RW_SHEET_NAME}')
-    await bot.tree.sync()
-    print('✅ Команды синхронизированы')
+    try:
+        await bot.tree.sync()
+        print('✅ Команды синхронизированы')
+    except Exception as e:
+        print(f'❌ Ошибка синхронизации команд: {e}')
 
 
 if __name__ == "__main__":
+    print("=" * 50)
+    print("🤖 Запуск Discord бота напрямую...")
+    print("⚠️  Рекомендуется запускать через: python web.py")
+    print("=" * 50)
     bot.run(DISCORD_TOKEN)
