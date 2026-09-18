@@ -4,3 +4,4 @@ google-api-python-client==2.108.0
 python-dotenv==1.0.0
 gspread==6.0.0
 flask==2.3.3
+audioop-lts
